@@ -1,0 +1,137 @@
+
+---
+title: "Analysis of Table MEAN"
+author: "f.j.Padt"
+date: "Friday, April 03, 2015"
+output: pdf_document
+---
+
+```{r Initialization, echo=FALSE}
+library(data.table)
+library("RODBC", lib.loc="~/R/R-3.1.3/library")
+
+A2R <- odbcConnect("ACCESS2R")
+dtMEAN <- as.data.table(sqlFetch(A2R, "RA1C230_MEAN", 
+                                 stringsAsFactors = FALSE))
+
+close(A2R)
+```
+
+## DUPLICATES ##
+
+```{r DUPLICATES}
+dtMEAN[, DUPLICATE:= grepl("DUPLICATE", EAN11, ignore.case = TRUE)]
+(t00 <- table(dtMEAN$DUPLICATE))
+cnt <- nrow()
+dtMEAN <- dtMEAN[DUPLICATE == FALSE, ]
+```
+
+Number of ENA11 with "DUPLICATE": `r t00["TRUE"]`. 
+These are deleted and not included in the rest of the analysis.
+
+## HPEAN ##
+
+The following table shows a count on EANTP and HPEAN.
+
+```{r HPEAN,echo=FALSE}
+
+(t01 <- table(dtMEAN$EANTP, ifelse(is.na(dtMEAN$HPEAN), "-", "X")))
+
+```
+Note there are `r t01[which(rownames(t01) == "HE"), colnames(t01) == "-"]` 
+entries with EANTP = HE but which are not marked as HPEAN
+(is this correct)?
+
+## MEINH ##
+
+The following table shows a count on the Unit of measure. 
+
+```{r MEINH}
+(t02 <- table(dtMEAN$MEINH))
+```
+
+As can be seen not everyhting is ST, is this correct?
+
+```{r 1toN}
+setkey(dtMEAN, "MATNR", "MEINH")
+dtMEAN[, DUP:=duplicated(dtMEAN, by=c("MATNR", "MEINH"))]
+```
+
+```{r Other}
+dtMEAN <- fread("c:/per/qryRA1C230_MEAN_Z2.txt")
+dtMEAN <- dtMEAN[MEINH=="ST"]
+setkey(dtMEAN, "EAN11","EANTP")
+
+tst<-dtMEAN[duplicated(dtMEAN)]
+write.table(tst, file="c:/per/duplicates.csv", row.names=FALSE, sep=";")
+
+dtMEAN <- dtMEAN[EANTP == "Z1" & MEINH == "ST", 
+                 .(MATNR, EAN11, EANTP, MEINH)]
+setnames(dtMEAN, 
+         c("MATNR","EAN11"),
+         c("SAPNR","MATNR"))
+# dtMEAN_Z1[, DM_ := duplicated(dtMEAN_Z1, by=c("MATNR"))]
+# dtMEAN_Z1[, DME := duplicated(dtMEAN_Z1, by=c("MATNR", "EAN11"))]
+
+# dtMARM_Z1 <- dtMARM[NUMTP == "Z1" & MEINH == "ST", 
+#                     .(MATNR, EAN11, NUMTP, MEINH)]
+# dtMARM_Z1[, DM_ := duplicated(dtMARM_Z1, by=c("MATNR"))]
+# dtMARM_Z1[, DME := duplicated(dtMARM_Z1, by=c("MATNR", "EAN11"))]
+
+library("RODBC", lib.loc="~/R/R-3.1.3/library")
+ch <- odbcConnect("ACCESS2R")
+
+close(ch)
+
+sqlTables(ch)
+sqlTables(ch, tableName = "R
+
+tst <- sqlFetch(ch, "BD1C100_RSDIOBJT")
+
+dfMEAN <- sqlFetch(ch, "RA1C230_MEAN")
+dfMARM <- sqlFetch(ch, "RA1C230_MARM")
+
+# sqlQuery(sh, paste("SELECT State, Murder FROM USArrests",
+#                    "WHERE Rape > 30 ORDER BY Murder"))
+
+#########################################################################
+
+dtMARM[, TAB:="MARM"]
+dtMEAN[, TAB:="MEAN"]
+
+dtMAPPING <- dtMEAN[, .(MATNR, EAN11, EANTP, TAB)]
+setnames(dtMAPPING, "EANTP", "NUMTP")
+
+dtMAPPING <- rbind(dtMAPPING, dtMARM[, .(MATNR, EAN11, NUMTP, TAB)])
+setkey(dtMAPPING, "MATNR", "TAB", "NUMTP")
+dtMAPPING <- dtMAPPING[EAN11!="DUPLICATE",]
+
+
+dtMAPPING[, DM__ := duplicated(dtMAPPING, by=c("MATNR"))]
+dtMAPPING[, DME_ := duplicated(dtMAPPING, by=c("MATNR","EAN11"))]
+dtMAPPING[, DMEN := duplicated(dtMAPPING, by=c("MATNR","EAN11","NUMTP" ))]
+dtMAPPING[, DM_N := duplicated(dtMAPPING, by=c("MATNR","NUMTP" ))]
+
+dtMAPPING[, D001 := sum(DMEN), by=c("MATNR","NUMTP")]
+dtMAPPING[, D002 := sum(DM_N), by=c("MATNR","NUMTP")]
+
+dtCHK001 <- dtMAPPING[D001  > 0]
+dtCHK002 <- dtMAPPING[D001 == 0 & D002 > 0]
+
+dtCHK003 <- dtMAPPING[D001 == 0 & D002 > 0 & NUMTP == "HE"]
+
+dtCHK004 <- dtCHK001[DM__ & DME_ & DMEN & DM_N,]
+dtMAT_Z1 <- dtCHK004[NUMTP == "Z1", ]
+
+
+dtCHK006 <- dtGVBNL
+setnames(dtCHK006, "article_number", "EAN11")
+
+
+dtMAT_Z1[, D_E_ := duplicated(dtMAT_Z1, by=c("EAN11"))]
+setkey(dtMAT_Z1, "EAN11")
+setkey(dtMAT_Z1, "MATNR", "TAB", "NUMTP")
+dtMAT_Z1 <- dtMAT_Z1[D_E_ != TRUE, ]
+
+dtCHK007 <- merge(dtCHK006, dtMAT_Z1[,.(EAN11, MATNR)], by="EAN11", all.x=TRUE)
+```

@@ -19,15 +19,18 @@ dtMARM <- as.data.table(sqlFetch(A2R, "RA1C230_MARM",
                                  stringsAsFactors = FALSE))
 setkey(dtMARM, "MATNR", "MEINH")
 
+dtMAPPING <- copy(dtMEAN)
+# dtMAPPING <- rbind(dtMEAN)
+
 close(A2R)
 ```
 
 ## DUPLICATES ##
 
 ```{r DUPLICATES, echo=FALSE, results='markup'}
-dtMEAN <- dtMEAN[, DUPLICATE:= grepl("DUPLICATE", EAN11, ignore.case = TRUE)]
-(t00   <- table(dtMEAN$DUPLICATE))
-dtMEAN <- dtMEAN[DUPLICATE == FALSE, ]
+dtMAPPING <- dtMAPPING[, DUPLICATE:= grepl("DUPLICATE", EAN11, ignore.case = TRUE)]
+(t00      <- table(dtMAPPING$DUPLICATE))
+dtMAPPING <- dtMAPPING[DUPLICATE == FALSE, ]
 ```
 
 Number of ENA11 with "DUPLICATE": `r t00["TRUE"]`.  
@@ -39,8 +42,8 @@ The following table shows a count on EANTP and HPEAN.
 
 ```{r HPEAN,echo=FALSE}
 
-(t01   <- table(dtMEAN$EANTP, ifelse(is.na(dtMEAN$HPEAN), "-", "X")))
-dtMEAN <- dtMEAN[EANTP != "HE", ]
+(t01      <- table(dtMAPPING$EANTP, ifelse(is.na(dtMAPPING$HPEAN), "-", "X")))
+dtMAPPING <- dtMAPPING[EANTP != "HE", ]
 ```
 Note there are `r t01[which(rownames(t01) == "HE"), colnames(t01) == "-"]` 
 entries with EANTP = HE but which are not marked as HPEAN  
@@ -54,17 +57,16 @@ The rest of the analysis will focus on the Z* EANTP by excluding HE.
 The following table shows a count on the Unit of measure (UoM). 
 
 ```{r MEINH, echo=FALSE, results='markup'}
-(t02 <- table(dtMEAN$MEINH))
-dtMEAN <- dtMEAN[MEINH == "ST", ]
+(t02      <- table(dtMAPPING$MEINH))
+dtMAPPING <- dtMAPPING[MEINH == "ST", ]
 ```
 
 As can be seen not everyhting is ST, is this correct?  
 
-* Analysis *  
+# Analysis #  
 The rest of the analysis will focus on the ST UoM.
 
 ```{r 1toN, echo=FALSE, results='markup'}
-dtMAPPING <- copy(dtMEAN)
 
 dtMAPPING <- dtMAPPING[, DM__ := duplicated(dtMAPPING, 
                                             by = c("MATNR")                  )]

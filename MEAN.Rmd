@@ -6,7 +6,7 @@ date: "Friday, April 03, 2015"
 output: pdf_document
 ---
 
-```{r Initialization, echo=FALSE}
+```{r Initialization, echo=FALSE, result=TRUE}
 library(data.table)
 library("RODBC", lib.loc="~/R/R-3.1.3/library")
 
@@ -23,11 +23,87 @@ dtMAPPING <- copy(dtMEAN)
 # dtMAPPING <- rbind(dtMEAN)
 
 close(A2R)
+
+fECHO    <- FALSE
+fRESULTS <- TRUE
 ```
+
+# Cleansing #
+
+Before the mapping table (MEAN) can be analyzed for the entitiy relationship any 
+invalid records need to b excluded. The following assumptions/Checks are made on the 
+validity of records:
+1. Only the Unit of Measure (UoM) of importance is: ST  
+2, No double mappings may exist on the key: MATNR, EAN11, EANTP 
+
+## MEINH ##
+
+The following table shows a count on the Unit of measure (UoM). 
+
+```{r MEINH, echo=fECHO, results=fRESULTS}
+(tmp      <- table(dtMAPPING$MEINH))
+dtMAPPING <- dtMAPPING[MEINH == "ST", ]
+```
+
+As can be seen there are `r sum(tmp) - tmp[which(row.names(tmp) == "ST")] `
+other Units of Measure in the table. 
+These will be excluded from the further analysis.
+
+## DOUBLE ENTRIES ##
+
+The table below shows the number of double records. These records are duplicates
+of a mapping relationship per OPCO.   
+Although functional there is no issue these records should not exist.
+
+```{r DOUBLE_ENTRIES, echo=fECHO, results=fRESULTS}
+dtMAPPING <- dtMAPPING[, DMET := duplicated(dtMAPPING, 
+                                            by = c("MATNR", "EAN11", "EANTP"))]
+(tmp <- table(dtMAPPING$DMET))
+dtMAPPING <- dtMAPPING[DMET != TRUE]
+```
+
+As can be seen in the table above `r nrow(dtMAPPING[DMET == TRUE])` 
+double entries exist.  
+These will be excluded from further analysis.
+
+## N:1 Relationship ##
+
+The table below show if 1 legacy article is mapped against multiple SAP articles.
+This relationship could be valid for Suppliers EAN (HE).
+Howerever for other EANTP it should not exist!
+
+```{r RN1, echo=fECHO, results=fRESULTS}
+dtMAPPING <- dtMAPPING[, D_ET := duplicated(dtMAPPING, 
+                                            by = c("EAN11", "EANTP"))]
+(tmp <- table(dtMAPPING[D_ET == TRUE]$EANTP))
+# (tmp <- sort(table(dtMAPPING[D_ET == TRUE]$EAN11), decreasing = TRUE))
+# example of 5 EAN11
+# dtMAPPING[EAN11=="1030000275"]
+
+dtMAPPING <- dtMAPPING[D_ET != TRUE]
+```
+
+In total there are `r sum(tmp) - 
+sum(table(dtMAPPING[D_ET == TRUE & EANTP == "HE"]$EANTP))` entries which should 
+not exist. 
+All N:1 relationships will be excluded from further analysis.
+
+
+## TEXT ##
+
+```{r TEXT, echo=fECHO, results=fRESULTS}
+dtMAPPING <- dtMAPPING[, REGEX:= gsub("[0-9]", "", EAN11, ignore.case = TRUE)]
+t001 <- table(dtMAPPING$REGEX)
+(sort(t001, decreasing = TRUE)[1:15])
+```
+
+The number of legacy aticle numbers which are numeric (so without characters) is: 
+`r t001[which(row.names(sort(t001, decreasing = TRUE)) == "")]`
+
 
 ## DUPLICATES ##
 
-```{r DUPLICATES, echo=FALSE, results='markup'}
+```{r DUPLICATES, echo=fECHO, results=fRESULTS}
 dtMAPPING <- dtMAPPING[, DUPLICATE:= grepl("DUPLICATE", EAN11, ignore.case = TRUE)]
 (t00      <- table(dtMAPPING$DUPLICATE))
 dtMAPPING <- dtMAPPING[DUPLICATE == FALSE, ]
@@ -40,7 +116,7 @@ These records will *not* be taken into account in the rest of theh analysis.
 
 The following table shows a count on EANTP and HPEAN.
 
-```{r HPEAN,echo=FALSE}
+```{r HPEAN,echo=fECHO, results=fRESULTS}
 
 (t01      <- table(dtMAPPING$EANTP, ifelse(is.na(dtMAPPING$HPEAN), "-", "X")))
 dtMAPPING <- dtMAPPING[EANTP != "HE", ]
@@ -52,21 +128,10 @@ entries with EANTP = HE but which are not marked as HPEAN
 The rest of the analysis will focus on the Z* EANTP by excluding HE.
 
 
-## MEINH ##
-
-The following table shows a count on the Unit of measure (UoM). 
-
-```{r MEINH, echo=FALSE, results='markup'}
-(t02      <- table(dtMAPPING$MEINH))
-dtMAPPING <- dtMAPPING[MEINH == "ST", ]
-```
-
-As can be seen not everyhting is ST, is this correct?  
-
 # Analysis #  
 The rest of the analysis will focus on the ST UoM.
 
-```{r 1toN, echo=FALSE, results='markup'}
+```{r 1toN, echo=fECHO, results=fRESULTS}
 
 dtMAPPING <- dtMAPPING[, DM__ := duplicated(dtMAPPING, 
                                             by = c("MATNR")                  )]
@@ -82,12 +147,12 @@ dtMAPPING <- dtMAPPING[, DM_N := duplicated(dtMAPPING,
 Remaining are `r nrow(dtMAPPING)` records.  
 following table gives an initial view on the data
 
-```{r View}
+```{r View, echo=fECHO}
 head(dtMAPPING , 10)
 ```
 
 
-```{r Other, echo=FALSE, results='markup'}
+```{r Other, echo=fECHO, results=fRESULTS}
 
 # dtMARM[, TAB:="MARM"]
 # dtMEAN[, TAB:="MEAN"]
@@ -128,3 +193,5 @@ head(dtMAPPING , 10)
 # 
 # dtCHK007 <- merge(dtCHK006, dtMAT_Z1[,.(EAN11, MATNR)], by="EAN11", all.x=TRUE)
 ```
+
+

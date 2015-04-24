@@ -1,26 +1,56 @@
 
 ---
 title: "Analysis of Table MEAN"
-author: "f.j.Padt"
-date: "Friday, April 03, 2015"
-output: pdf_document
+author: "Floris Padt & Laura Sabatini"
+date: "Wednesday Apr 08"
+output: word_document
 ---
 
 ```{r Initialization, echo=FALSE, result=TRUE}
 library(data.table)
 library("RODBC", lib.loc="~/R/R-3.1.3/library")
+library("xlsx", lib.loc="~/R/R-3.1.3/library")
 
-A2R <- odbcConnect("ACCESS2R")
-dtMEAN <- as.data.table(sqlFetch(A2R, "RA1C230_MEAN", 
-                                 stringsAsFactors = FALSE))
+parSYST <- "RA1"
+parCLNT <- "250"
+parTABN <- "MEAN"
+parMEAN <- paste0("qry", parSYST, "C", parCLNT, "_", parTABN, "_MARA")
+
+file.remove(dir("./results", full.names = TRUE))
+fileXL <- paste0("./results", "/wb.xlsx")
+
+A2R    <- odbcConnect("ACCESS2R")
+dtMEAN <- as.data.table(
+  sqlFetch(A2R, parMEAN, 
+           stringsAsFactors = FALSE)
+  )[, `:=`(LVORM = NULL, MSTAE = NULL, MSTAV = NULL)]
+
 setkey(dtMEAN, "MATNR", "MEINH")
 
-dtMARM <- as.data.table(sqlFetch(A2R, "RA1C230_MARM", 
-                                 stringsAsFactors = FALSE))
-setkey(dtMARM, "MATNR", "MEINH")
+dfCMT <- sqlQuery(A2R, 
+                  paste("SELECT START, DTIME, RECORDCOUNT", 
+                        "FROM zsDD02_SLCT",
+                        "WHERE ((SYSTEMID=", 
+                        paste0("'", parSYST, "'"),  
+                        ") AND (CLIENT=", 
+                        parCLNT, ") AND (TABNAME=", 
+                        paste0("'", parTABN, "'"), 
+                        "));")) 
+
+attr(dtMEAN, "RefreshDate")      <- dfCMT[["START"]]
+attr(dtMEAN, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+
+
+# dtMARM <- as.data.table(sqlFetch(A2R, "RA1C230_MARM", 
+#                                  stringsAsFactors = FALSE))
+# setkey(dtMARM, "MATNR", "MEINH")
 
 dtMAPPING <- copy(dtMEAN)
 # dtMAPPING <- rbind(dtMEAN)
+
+attr(dtMAPPING, "RefreshDate")      <- dfCMT[["START"]]
+attr(dtMAPPING, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+
 
 close(A2R)
 
@@ -30,12 +60,29 @@ fRESULTS <- TRUE
 
 # Cleansing #
 
-Before the mapping table (MEAN) can be analyzed for the entitiy relationship, any 
+Before the mapping table (MEAN) can be analyzed for the entitiy relationships, any 
 invalid records need to be excluded. The following assumptions/Checks are made on the 
 validity of records:  
-1. Only the Unit of Measure (UoM) of importance is: ST  
-2. The supplier EAN (HE) is the main EAN if existing.
+1. Only the Unit of Measure (UoM) of importance is: *ST*  
+2. The supplier EAN (HE) is the main EAN if existing.  
+3. One Supplier EAN has One SAP Article Assigned  
+4. One SAP Article has 1 or N legacy Articles (1:1  or 1:N). 
 
+
+## Table MEAN ##
+
+This reproducible analysis is based upon the MEAN extracted from the ECC system. 
+The data structure, recency and 10 example records of this table can be found below:
+
+Last Extraction Date from table `r parTABN` out of `r parSYST` client `r parCLNT`:
+`r attr(dtMAPPING, 'RefreshDate')`    
+Number of records Extracted: `r attr(dtMAPPING, 'RecordsExtracted')`  
+Number of records Analysed : `r nrow(dtMAPPING)` 
+
+```{r EXAMPLE_MEAN, echo=FALSE, results=TRUE}
+#str(dtMEAN)
+dtMAPPING[1:10, .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)]
+```
 
 ### MEINH ###
 
@@ -47,7 +94,7 @@ dtMAPPING <- dtMAPPING[MEINH == "ST", ]
 ```
 
 As can be seen there are `r sum(tmp) - tmp[which(row.names(tmp) == "ST")] `
-other Units of Measure in the table. 
+other Units of Measure in the table.  
 These will be excluded from the further analysis.
 
 ```{r DOUBLE_ENTRIES, echo=FALSE, results='hide'}
@@ -68,6 +115,42 @@ dtMAPPING <- dtMAPPING[DMET != TRUE]
 # These will be excluded from further analysis.
 ```
 
+### SAP Article - DUPLICATE CHECK ###
+
+In order to check if any SAP Articles are set up twice a check on the relationship 
+between SAP Article and the supplier EAn (EANTP = HE) is done.  In case multiple 
+Articles share the same EAN these articles are said to be duplicates. 
+
+```{r SAP_DUPLICATES, echo=fECHO, results=fRESULTS}
+dtMAPPING <- dtMAPPING[EANTP == "HE"
+                       , SAPDUP := duplicated(dtMAPPING[EANTP == "HE"], 
+                                              by = c("EAN11"))]
+dtMAPPING <- dtMAPPING[EANTP == "HE", 
+                       D002 := sum(SAPDUP), by = c("EAN11")]
+table(dtMAPPING[EANTP == "HE"]$SAPDUP)
+tmp <- dtMAPPING[D002 > 0][order(EAN11),
+                           .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)]
+(tmp[1:10])
+
+fileName  <- "./RESULTS/SAP_ARTICLE_DUPLICATES.csv"
+write.table(dtMAPPING[D002 > 0][order(EAN11), 
+                .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+            file = fileName, 
+            sep = ";",col.names = TRUE, row.names = FALSE)
+
+write.xlsx(dtMAPPING[D002 > 0][order(EAN11), 
+                .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+           fileXL, sheetName="SAP_ARTICLE_DUPLICATES", 
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=TRUE)
+
+dtMAPPING <- dtMAPPING[is.na(SAPDUP) | SAPDUP == FALSE]
+
+```
+
+It seems `r nrow(tmp)/2` duplicates exist. These records are excluded from further
+analysis.  
+Details can be found in the file: `r fileName`
+
 
 ### HPEAN ###
 
@@ -76,23 +159,46 @@ The following table shows a count on EANTP and HPEAN.
 ```{r HPEAN,echo=fECHO, results=fRESULTS}
 
 (tmp      <- table(dtMAPPING$EANTP, ifelse(is.na(dtMAPPING$HPEAN), "-", "X")))
+
+fileName  <- "./RESULTS/HE_not_HPEAN.csv"
+write.table(dtMAPPING[EANTP == "HE" & is.na(HPEAN), 
+                      .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+            file = fileName, 
+            sep = ";",col.names = TRUE, row.names = FALSE)
+
+write.xlsx(dtMAPPING[EANTP == "HE" & is.na(HPEAN), 
+                      .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+           fileXL, sheetName="HE_not_HPEAN", 
+           col.names=TRUE, row.names=FALSE, append=TRUE, showNA=TRUE)
+
 dtMAPPING <- dtMAPPING[EANTP != "HE", ]
 ```
+
 Note there are `r tmp[which(rownames(tmp) == "HE"), colnames(tmp) == "-"]` 
-entries with EANTP = HE but which are not marked as HPEAN  
-(is this correct)?
+entries with EANTP = HE but which are not marked as HPEAN.  
+Details can be found in the file: `r fileName`
 
 The rest of the analysis will focus on the Z* EANTP by excluding HE.
 
 ### N:1 Relationship ###
 
-The table below show if 1 legacy article is mapped against multiple SAP articles.
-This relationship could be valid for Suppliers EAN (HE).
-Howerever for other EANTP it should not exist!
+The remaining number of records for analysis are `r  nrow(dtMAPPING)`.  
+These distribution per EANTP is as follows:   
+
+```{r RN1_DISTR, echo=fECHO, results=fRESULTS}
+table(dtMAPPING$EANTP)
+```
+
+
+Next a check will be done if Multiple SAP Articles are mapped against the same
+legacy article (N:1 relationship). This should not happen
 
 ```{r RN1, echo=fECHO, results=fRESULTS}
+fileName  <- "./RESULTS/RN1.csv"
+
 dtMAPPING <- dtMAPPING[, D_ET := duplicated(dtMAPPING, 
                                             by = c("EAN11", "EANTP"))]
+if(sum(dtMAPPING$D_ET) > 0 ){
 dtMAPPING <- dtMAPPING[, D001 := sum(D_ET), by = c("EAN11", "EANTP")]
 table(dtMAPPING[D_ET == TRUE]$EANTP)
 sort(table(dtMAPPING[D001 > 0]$EAN11), decreasing=TRUE)[1:10]
@@ -103,35 +209,52 @@ dtMAPPING <- dtMAPPING[ !EAN11 %in% c("DUPLICATE", "DUP")]
 
 rbind(
   dtMAPPING[D001 > 0 & EANTP == "Z1", 
-            .(SYSTID, MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)][1:4],
+            .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)][1:4],
   dtMAPPING[D001 > 0 & EANTP == "Z2", 
-            .(SYSTID, MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)][1:4],
+            .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)][1:4],
   dtMAPPING[D001 > 0 & EANTP == "Z3", 
-            .(SYSTID, MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)][1:4]
+            .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)][1:4]
   )
 
-write.table(dtMAPPING[D001 > 0, .(SYSTID, MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
-            file = "./RESULTS/RN1.csv", 
+write.table(dtMAPPING[D001 > 0, .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+            file = fileName, 
             sep = ";",col.names = TRUE, row.names = FALSE)
 
+write.xlsx(dtMAPPING[D001 > 0, .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+           fileXL, sheetName="RN1", 
+           col.names=TRUE, row.names=FALSE, append=TRUE, showNA=TRUE)
+
 dtMAPPING <- dtMAPPING[D_ET != TRUE]
+
+# It seems that there are 2 special types which will be excluded from further analysis, being:  
+# 1. DUPLICATE  
+# 2. DUP  
+
+} else {
+  tmp <- NULL
+  if (file.exists(fileName)){file.remove(fileName)}
+}
+
+dtMAPPING <- dtMAPPING[EANTP %in% c("Z1", "Z2", "Z3")]
 ```
 
-It seems that there are 2 special types which will be excluded from further analysis, being:  
-1. DUPLICATE  
-2. DUP  
-
-In total there are `r nrow(tmp)` entries which should not exist! In case Z3 can be ignored only
-`r nrow(dtMAPPING[D_ET == TRUE])` remain. 
+In total there are `r ifelse(is.null(nrow(tmp)), 0L ,nrow(tmp))` entries.  
 All N:1 relationships will be excluded from further analysis.  
+
+Note that Z3 will be kept in the analysis as these are needed for the UK.
+  
+*'Basically the main purpose of the field is for CL reporting but also applies to 
+lenses. When the product team need to run a report on registrations they use 
+the CF REG and collection codes CF COL.  
+If the EANs aren't migrated then it won’t be possible to report of this split.'*
 
 
 ```{r TEXT, echo=FALSE, results='hide'}
 ## TEXT ##
 
-dtMAPPING <- dtMAPPING[, REGEX:= gsub("[0-9]", "", EAN11, ignore.case = TRUE)]
-t001 <- table(dtMAPPING$REGEX)
-(sort(t001, decreasing = TRUE)[1:15])
+# dtMAPPING <- dtMAPPING[, REGEX:= gsub("[0-9]", "", EAN11, ignore.case = TRUE)]
+# t001 <- table(dtMAPPING$REGEX)
+# (sort(t001, decreasing = TRUE)[1:15])
 
 # The number of legacy aticle numbers which are numeric (so without characters) is: 
 # `r t001[which(row.names(sort(t001, decreasing = TRUE)) == "")]`
@@ -141,35 +264,145 @@ t001 <- table(dtMAPPING$REGEX)
 ```{r DUPLICATES, echo=FALSE, results='hide'}
 ## DUPLICATES ##
 
-dtMAPPING <- dtMAPPING[, DUPLICATE:= grepl("DUPLICATE", EAN11, ignore.case = TRUE)]
-(t00      <- table(dtMAPPING$DUPLICATE))
-dtMAPPING <- dtMAPPING[DUPLICATE == FALSE, ]
+# dtMAPPING <- dtMAPPING[, DUPLICATE:= grepl("DUPLICATE", EAN11, ignore.case = TRUE)]
+# (t00      <- table(dtMAPPING$DUPLICATE))
+# dtMAPPING <- dtMAPPING[DUPLICATE == FALSE, ]
 
 # Number of ENA11 with "DUPLICATE": `r t00["TRUE"]`.  
 # These records will *not* be taken into account in the rest of theh analysis.
 ```
 
 # Analysis #  
-The rest of the analysis will focus on the ST UoM.
+The table MEAN has now been reduced to `r nrow(dtMAPPING)` rows out of `r nrow(dtMEAN)`.
 
-```{r 1toN, echo=fECHO, results=fRESULTS}
+The distribution per EANTP is as follows:   
+```{r RN1_DISTR_EANTP, echo=fECHO, results=fRESULTS}
+table(dtMAPPING$EANTP)
+```
 
+## One SAP Article being mapped by multiple OPCO's ##
+
+The following table shows the SAP Articles which have legacy Articles in multiple OPCO's.
+
+```{r M__, echo=fECHO, results=fRESULTS}
+
+# Duplicate SAP Articles for the same MEINH
 dtMAPPING <- dtMAPPING[, DM__ := duplicated(dtMAPPING, 
                                             by = c("MATNR")                  )]
-dtMAPPING <- dtMAPPING[, DME_ := duplicated(dtMAPPING, 
-                                            by = c("MATNR", "EAN11")         )]
-dtMAPPING <- dtMAPPING[, DMEN := duplicated(dtMAPPING, 
-                                            by = c("MATNR", "EAN11", "EANTP"))]
-dtMAPPING <- dtMAPPING[, DM_N := duplicated(dtMAPPING, 
-                                            by = c("MATNR", "EANTP")         )]
+dtMAPPING <- dtMAPPING[, CM__ := sum(DM__), by = c("MATNR")]
+tmp <- dtMAPPING[CM__ > 0][order(MATNR), 
+                           .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)]
+if (nrow(tmp) > 0){
+  (tmp[1:10])
+  }
 
 ```
 
-Remaining are `r nrow(dtMAPPING)` records.  
-Following table gives an initial view on the data
+In total `r nrow(dtMAPPING[DM__ > 0])` articles are mapped by multiple OPCO's.  
+This can be correct.
 
-```{r View, echo=fECHO, results=TRUE}
-head(dtMAPPING[, .(SYSTID, MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ] , 10)
+## One SAP Article having multiple legacy articles (1:N) ##
+
+The following table shows the SAP Articles which have multiple legacy Articles 
+mapped for an OPCO.
+
+```{r M_N, echo=fECHO, results=fRESULTS}
+# Duplicate entries by SAP Article and OPCO
+dtMAPPING <- dtMAPPING[, DM_N := duplicated(dtMAPPING, 
+                                            by = c("MATNR", "EANTP")         )]
+dtMAPPING <- dtMAPPING[, CM_N := sum(DM_N), by = c("MATNR", "EANTP")]
+tmp <- dtMAPPING[CM_N > 0][order(MATNR), 
+                           .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)]
+if (nrow(tmp) > 0){
+  dtMAPPING[, .(SAP  = sum(DM_N), LEG = sum(CM_N), N = .N, 
+                R1_N = paste("1", round(sum(CM_N)/sum(DM_N), 0), sep=":")), 
+            by=c("EANTP")]
+  }
+
+if (nrow(tmp) > 0){
+  print(tmp[1:10])
+  }
+
+fileName  <- "./RESULTS/R1N.csv"
+write.table(dtMAPPING[CM_N > 0, .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+            file = fileName, 
+            sep = ";", col.names = TRUE, row.names = FALSE)
+
+write.xlsx(dtMAPPING[CM_N > 0, .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+           fileXL, sheetName="R1N", 
+           col.names=TRUE, row.names=FALSE, append=TRUE, showNA=TRUE)
+
+```
+
+In total `r nrow(dtMAPPING[DM_N > 0])` articles have multiple legacy articles mapped.
+This is the famous 1:N relationship which makes it difficult to report on legacy 
+articles. 
+
+## One SAP Article having multiple legacy articles (1:N) by Article Type##
+
+The following table shows the SAP Articles which have multiple legacy Articles 
+mapped for an OPCO split by Article Type.
+
+```{r M_N_AT, echo=fECHO, results=fRESULTS}
+# Duplicate entries by SAP Article and OPCO
+dtMAPPING <- dtMAPPING[, DM_N_AT := duplicated(dtMAPPING, 
+                                               by = c("MATNR", "EANTP")         )]
+dtMAPPING <- dtMAPPING[, CM_N_AT := sum(DM_N), by = c("MATNR", "EANTP")]
+tmp <- dtMAPPING[CM_N_AT > 0][order(MATNR), 
+                              .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)]
+if (nrow(tmp) > 0){
+  dtMAPPING[, .(SAP  = sum(DM_N_AT), LEG = sum(CM_N_AT), N = .N, 
+                R1_N= paste("1", round(sum(CM_N_AT)/sum(DM_N_AT), 0), sep=":")), 
+            by=c("EANTP", "MTART", "MTBEZ")][order(EANTP, MTART)]
+  }
+
+fileName  <- "./RESULTS/R1N_AT.csv"
+write.table(dtMAPPING[CM_N_AT > 0, .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+            file = fileName, 
+            sep = ";", col.names = TRUE, row.names = FALSE)
+
+write.xlsx(dtMAPPING[CM_N_AT > 0, .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN) ], 
+           fileXL, sheetName="R1N_AT", 
+           col.names=TRUE, row.names=FALSE, append=TRUE, showNA=TRUE)
+```
+
+# Result #
+
+Below one can see the 1:N relationships per article type excluding the 1:1
+
+```{r Result, echo=fECHO, results=fRESULTS}
+if (nrow(tmp) > 0){
+  dtMAPPING[, .(SAP  = sum(DM_N_AT), LEG = sum(CM_N_AT), N = .N, 
+                R1_N= paste("1", round(sum(CM_N_AT)/sum(DM_N_AT), 0), sep=":")), 
+            by=c("EANTP", "MTART", "MTBEZ")][SAP > 0][order(-R1_N, EANTP, MTART)]
+  }
+```
+
+A sample showing the actual records
+
+```{r RESULT_SAMPLE, echo=FALSE, results=FALSE}
+if (nrow(tmp) > 0){
+  print(tmp[1:10])
+  }
+```
+
+
+```{r ME_, echo=FALSE, results=FALSE}
+
+## Double mapping records ##
+
+# The following table shows if any double entries exist.  
+# This should not be the case.
+
+# Duplicate entries were SAP Article and EAN11 is the same
+dtMAPPING <- dtMAPPING[, DME_ := duplicated(dtMAPPING, 
+                                            by = c("MATNR", "EAN11")         )]
+dtMAPPING <- dtMAPPING[, CME_ := sum(DME_), by = c("MATNR", "EAN11")]
+tmp <- dtMAPPING[CME_ > 0][order(MATNR), 
+                           .(MATNR, MEINH, LFNUM, EAN11, EANTP, HPEAN)]
+if (nrow(tmp) > 0) {(tmp[1:10])}
+
+# In total `r nrow(dtMAPPING[DME_ > 0])` articles have double entries.
 ```
 
 

@@ -1,0 +1,158 @@
+---
+title: "VEUK_GI"
+author: "F.J.Padt"
+date: "Friday, April 24, 2015"
+output: word_document
+---
+
+```{r Initialization, echo=FALSE, results='hide'}
+library(data.table)
+library(RODBC)
+library(readxl)
+library(knitr)
+
+pEcho    <- FALSE
+pEval    <- TRUE
+pResults <- 'asis' 
+```
+
+```{r ReadMean, echo=pEcho, eval=pEval}
+parSYST <- "RA1"
+parCLNT <- "250"
+parTABN <- "MEAN"
+parMEAN <- paste0(parSYST, "C", parCLNT, "_", parTABN)
+
+A2R    <- odbcConnect("ACCESS2R")
+dtMEAN <- as.data.table(
+  sqlFetch(A2R, parMEAN, 
+           stringsAsFactors = FALSE))
+
+setkey(dtMEAN, "MATNR", "MEINH")
+
+dfCMT <- sqlQuery(A2R, 
+                  paste("SELECT START, DTIME, RECORDCOUNT", 
+                        "FROM zsDD02_SLCT",
+                        "WHERE ((SYSTEMID=", 
+                        paste0("'", parSYST, "'"),  
+                        ") AND (CLIENT=", 
+                        parCLNT, ") AND (TABNAME=", 
+                        paste0("'", parTABN, "'"), 
+                        "));")) 
+
+attr(dtMEAN, "RefreshDate")      <- dfCMT[["START"]]
+attr(dtMEAN, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+
+dtMAPPING <- copy(dtMEAN)
+
+attr(dtMAPPING, "RefreshDate")      <- dfCMT[["START"]]
+attr(dtMAPPING, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+
+close(A2R)
+
+```
+## Read Table MEAN
+
+The table `r parTABN` from system `r parSYST` Client `r parCLNT` is used for 
+converting legacy articles into iSynergy Articles.
+
+Details on the used table:
+```{r displayDetailMean, echo=pEcho, eval=pEval, results='markup'}
+kable(str(dtMEAN), format="latex")
+```
+
+```{r PrepDownloadSourceFile, echo=pEcho}
+
+sourcefile <- "R25_Inv Ageing_Article GR_Test Data.xlsx"
+sharepoint <- paste0("https://projects.gvshare.com/iSynergy/01_Release_1/", 
+                     "06._Reporting/02._Design/01._FDs/", 
+                     "Historical%20and%20Budget%20data/")
+url        <- paste0(sharepoint, sourcefile)
+
+destfile <- "R25-Ageing_History_VEUK.xlsx"
+destRES  <- "VEUK_GI_MATNR.csv"
+destBW   <- paste0("./results/", destRES )
+pEANTP   <- "Z2"
+method   <- "auto"
+```
+
+```{r DownloadSourceFile, echo=pEcho}
+
+setInternet2(use = TRUE)
+
+download.file(url, 
+              destfile, 
+              method, 
+              quiet = FALSE, mode = "wb",
+              cacheOK = TRUE,
+              extra = getOption("download.file.extra"))
+```
+
+```{r ReadSourceFile, echo=pEcho}
+dtGI <- as.data.table(read_excel(destfile, sheet = 1, 
+                                 col_names = TRUE, col_types = NULL, 
+                                 na = "", skip = 0))
+```
+## Read Source File
+
+The file which needs to be converted is read from:  
+*`r url`*,  
+
+The results file be saved as: `r destBW`
+
+The EANTP used for mapping is `r pEANTP`.  
+File Details: 
+```{r displayDetailGI, echo=pEcho, eval=pEval, results='markup'}
+kable(str(dtGI), format="html")
+```
+
+
+```{r MapSource, echo=pEcho}
+
+setnames(dtGI, 
+         c("Site", "Article", "GR Date"), 
+         c("SITE", "EAN11"  , "GIDAT"))
+
+dtGI <- dtGI[, EAN11:= as.character(EAN11)]
+
+dtMAPPING <- dtMAPPING[MEINH == "ST" & EANTP == pEANTP, .(MATNR, EAN11)]
+setkey(dtMAPPING, "MATNR")
+
+dtGI <- merge(dtGI, dtMAPPING, all.x = TRUE, by = "EAN11")
+```
+## Migrate Legacy Articles To iSynergy Articles
+
+Based upon EANTP `r pEANTP` the legacy articles are migrated to iSynergy Articles.
+In total `r round(nrow(dtGI[!is.na(MATNR)])/nrow(dtGI[]), 1)`% of the articles
+could be migrated. The records which don't have an iSynergy article will be deleted.
+In total: `r nrow(dtGI[is.na(MATNR)]) ` records.  
+
+```{r QualityCheck, echo=pEcho }
+dtGI <- dtGI[!is.na(MATNR)]
+
+dtGI <- dtGI[, DUP  := duplicated(dtGI  , by = c("MATNR"))]
+dtGI <- dtGI[, DUP2 := (sum(DUP) + 1L)  , by = c("MATNR") ]
+
+# save Duplicates for reporting
+dtDP <- dtGI[DUP2 > 1]
+
+dtGI <- dtGI[, GIDAT:= max(GIDAT)       , by = c("MATNR") ]
+dtGI <- dtGI[DUP == FALSE               ,                 ]
+dtGI <- dtGI[, `:=`(DUP = NULL, DUP2 = NULL)              ]
+
+write.table(dtGI, file = paste0(destBW), sep = ";",
+            col.names = TRUE, row.names = FALSE)
+```
+## Quality check
+
+The resulting set with migrated articles is checked for iSynergy articles which 
+have multiple 'Last Goods Receipt Dates'. This can happen in case multiple legacy
+articles are migrated to the same iSynergy Article.
+
+In this case the *maximum Last Goods Receipt Date* is taken and duplicates are 
+removed. A list of duplicates can be found below:  
+
+
+```{r displayDetailDP, echo=pEcho, eval=pEval, results='markup' }
+kable(str(dtDP)  , format = "latex", caption = "caption")
+kable(print(dtDP), format = "latex", caption = "caption2")
+```

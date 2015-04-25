@@ -42,10 +42,10 @@ dfCMT <- sqlQuery(A2R,
 attr(dtMEAN, "RefreshDate")      <- dfCMT[["START"]]
 attr(dtMEAN, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
 
-dtMAPPING <- copy(dtMEAN)
-
-attr(dtMAPPING, "RefreshDate")      <- dfCMT[["START"]]
-attr(dtMAPPING, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+# dtMAPPING <- copy(dtMEAN)
+# 
+# attr(dtMAPPING, "RefreshDate")      <- dfCMT[["START"]]
+# attr(dtMAPPING, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
 
 close(A2R)
 
@@ -76,7 +76,7 @@ pEANTP   <- "Z1"
 method   <- "auto"
 ```
 
-```{r DownloadSourceFile, echo=pEcho}
+```{r DownloadSourceFile, echo=pEcho, eval=FALSE}
 
 setInternet2(use = TRUE)
 
@@ -89,9 +89,10 @@ download.file(url,
 ```
 
 ```{r ReadSourceFile, echo=pEcho}
-dtGI <- as.data.table(read_excel(destfile, sheet = 1, 
-                                 col_names = TRUE, col_types = NULL, 
-                                 na = "", skip = 0))
+# dtGI <- as.data.table(read_excel(destfile, sheet = 1, 
+#                                  col_names = TRUE, col_types = NULL, 
+#                                  na = "", skip = 0))
+dtGI <- fread("GVBNL_GI.csv", sep=";")
 ```
 ## Read Source File
 
@@ -109,8 +110,8 @@ kable(str(dtGI), format="html")
 ```{r MapSource, echo=pEcho}
 
 setnames(dtGI, 
-         c("Site", "Article", "GR Date"), 
-         c("SITE", "EAN11"  , "GIDAT"))
+         c("Site", "LART"), 
+         c("SITE", "EAN11"))
 
 dtGI <- dtGI[, EAN11:= as.character(EAN11)]
 
@@ -123,11 +124,7 @@ dtGI <- merge(dtGI, dtMAPPING, all.x = TRUE, by = "EAN11")
 
 ```{r}
 
-setnames(dtGVBNL_GI, 
-         c("LART" , "Site"), 
-         c("EAN11", "SITE"))
 
-dtMEAN_Z1ST <- dtMEAN[MEINH == "ST" & EANTP == "Z1", .(MATNR, EAN11)]
 setkey(dtMEAN_Z1ST, "MATNR")
 
 # dtMEAN_Z1ST <- dtMEAN_Z1ST[, DMAT := duplicated(dtMEAN_Z1ST, by = c("MATNR"))]
@@ -183,3 +180,10 @@ removed. A list of duplicates can be found below:
 kable(str(dtDP)  , format = "latex", caption = "caption")
 kable(print(dtDP), format = "latex", caption = "caption2")
 ```
+
+```{r}
+dtMAPPING <- dtMAPPING[, DUP  := duplicated(dtMAPPING, 
+                                              by = c("EAN11"))]
+dtMAPPING <- dtMAPPING[, DUP2 := (sum(DUP) + 1L), by = c("EAN11")]
+```
+

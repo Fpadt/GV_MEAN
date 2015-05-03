@@ -1,0 +1,176 @@
+---
+output: 
+   pdf_document:
+    toc:             true
+    toc_depth:       2
+    number_sections: true
+    fig_caption:     true
+    fig_crop:        true
+    highlight:       tango    
+---
+
+\newpage
+![Logo](http://www.grandvision.com/img/logoGV.png)  
+
+```{r RSetup, echo=FALSE, eval=TRUE, results='hide', prompt=FALSE}
+
+library(data.table, verbose = FALSE, quietly = TRUE)
+library(knitr     , verbose = FALSE, quietly = TRUE)
+library(RODBC     , verbose = FALSE, quietly = TRUE)
+library(xlsx      , verbose = FALSE, quietly = TRUE)
+library(printr    , verbose = FALSE, quietly = TRUE)
+
+fEcho    <- FALSE
+fEval    <- TRUE
+fCache   <- FALSE
+fResults <- 'asis'
+
+file.remove(dir("./results", full.names = TRUE))
+fileXL <- paste0("./results", "/BA1C200_PC_DTP_IP.xlsx")
+
+sessionInfo()
+```
+
+\newpage
+![Logo](http://www.grandvision.com/img/logoGV.png)  
+
+```{r ReadingData, echo=fEcho, eval=fEval, cache=TRUE}
+parSYST <- "BA1"
+parCLNT <- "200"
+parTAB1 <- "RSBKDTP"
+parTAB2 <- "RSBKDTPSTAT"
+parTAB3 <- "RSPCCHAIN"
+
+
+parTBL1 <- paste0(parSYST, "C", parCLNT, "_", parTAB1)
+parTBL2 <- paste0(parSYST, "C", parCLNT, "_", parTAB2)
+parTBL3 <- paste0(parSYST, "C", parCLNT, "_", parTAB3)
+
+A2R    <- odbcConnect("ACCESS2R")
+
+dtRSBKDTP <- as.data.table(
+  sqlFetch(A2R, parTBL1, 
+           stringsAsFactors = FALSE)
+  )
+setkey(dtRSBKDTP, "DTP")
+
+dtRSBKDTPSTAT <- as.data.table(
+  sqlFetch(A2R, parTBL2, 
+           stringsAsFactors = FALSE)
+  )
+setkey(dtRSBKDTPSTAT, "DTP")
+
+dtRSPCCHAIN <- as.data.table(
+  sqlFetch(A2R, parTBL3, 
+           stringsAsFactors = FALSE)
+  )
+setkey(dtRSPCCHAIN, "CHAIN_ID", "LNR", "OBJVERS", "TYPE", "VARIANTE")
+
+dfCMT <- sqlQuery(A2R, 
+                  paste("SELECT START, DTIME, RECORDCOUNT", 
+                        "FROM zsDD02_SLCT",
+                        "WHERE ((SYSTEMID=", 
+                        paste0("'", parSYST, "'"),  
+                        ") AND (CLIENT=", 
+                        parCLNT, ") AND (TABNAME=", 
+                        paste0("'", parTAB1, "'"), 
+                        "));")) 
+
+attr(dtRSBKDTP, "RefreshDate")      <- dfCMT[["START"]]
+attr(dtRSBKDTP, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+
+close(A2R)
+
+```
+
+# System and Parameters
+
+```{r SystemParamters, echo=fEcho, eval=fEval, cache=fCache, results=fResults, prompt=FALSE}
+parSYST
+parCLNT
+dfCMT[["START"]]
+```
+
+
+\newpage
+![Logo](http://www.grandvision.com/img/logoGV.png)
+
+
+```{r CreateDataSet, echo=fEcho, eval= fEval, cache = fCache, results='hide'}
+dtRSPCCHAIN[, DTP:= VARIANTE]
+setkey(dtRSPCCHAIN, "DTP")
+
+dtDS01 <- merge(dtRSBKDTP, dtRSBKDTPSTAT, all.x = TRUE, by = c("SYSTID", "DTP"))
+dtDS02 <- merge(dtDS01   , dtRSPCCHAIN  , all.x = TRUE, by = c("SYSTID", "DTP"))
+```
+
+```{r Analysis01, echo=fEcho, eval=fEval, cache=fCache, results='hide'}
+dtANA01 <- dtDS02[is.na(CHAIN_ID) &
+                    TGTTP == "IOBJT" &
+                    grepl("RA1CLNT250", x = SRC) &
+                    UPDMODE != "I", 
+                  .(DTP, TGT)]
+```
+
+# Defect
+##Desciption
+The following `r nrow(dtANA01)` Text DTP's seem not to be in any Process Chain. 
+It looks like these were manually triggered as a one-off. 
+
+## Impact
+Executing a DTP only once will not capture any changes after the DTP was executed.
+
+## Solution Direction
+1. Add these DTP in the respective process chain in BD1
+2. Transport the process Chain to BA1
+3. Check the scheduling of the process Chain
+
+## Example(s)
+
+The total list can be found below and in the excel file (*`r fileXL `*):
+```{r Details01, echo=fEcho, eval=fEval, cache=fCache, results=fResults}
+write.xlsx(dtANA01[order(DTP)], 
+           fileXL, sheetName="PC_MISSING_DTP_TEXT", 
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=TRUE)
+
+dtANA01[order(DTP)]
+```
+
+\newpage
+![Logo](http://www.grandvision.com/img/logoGV.png)  
+
+```{r Analysis02, echo=fEcho, eval=fEval, cache=fCache, results='hide'}
+shtName  <- "TEXT_ON_DELTA"
+
+dtANA02 <- dtDS02[is.na(CHAIN_ID) &
+                    TGTTP == "IOBJT" &
+                    grepl("RA1CLNT250", x = SRC) &
+                    UPDMODE == "D", 
+                  .(DTP, TGT, UPDMODE )]
+```
+
+
+# Defect
+##Desciption
+The following `r nrow(dtANA02)` Text DTP's seem to be delta loads instead of
+full load and not to be in any Process Chain. According to the design document 
+all text DTPs and IPs should be Full Loads
+It looks like these were manually triggered as a one-off. 
+
+## Impact
+Additional Monitoring required
+
+## Solution Direction
+1. Put the DTP's on Full Load in BD1 and Transport
+
+## Example(s)
+
+The total list can be found below and in the excel file (*`r fileXL `*) 
+sheet (*`r shtName `*):
+```{r Details02, echo=fEcho, eval=fEval, cache=fCache, results=fResults}
+write.xlsx(dtANA02[order(DTP)], 
+           fileXL, sheetName = shtName, 
+           col.names=TRUE, row.names=FALSE, append=TRUE, showNA=TRUE)
+
+dtANA02[order(DTP)]
+```

@@ -15,6 +15,7 @@ library(data.table, verbose = FALSE, quietly = TRUE)
 library(knitr     , verbose = FALSE, quietly = TRUE)
 library(RODBC     , verbose = FALSE, quietly = TRUE)
 library(xlsx      , verbose = FALSE, quietly = TRUE)
+library(printr    , verbose = FALSE, quietly = TRUE)
 
 fEcho    <- FALSE
 fEval    <- TRUE

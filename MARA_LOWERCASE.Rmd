@@ -1,0 +1,113 @@
+---
+output: 
+   pdf_document:
+    toc:             true
+    toc_depth:       2
+    number_sections: true
+    fig_caption:     true
+    fig_crop:        true
+    highlight:       tango    
+---
+
+\newpage
+![Logo](http://www.grandvision.com/img/logoGV.png)  
+
+```{r RSetup, echo=FALSE, eval=TRUE, results='asis'}
+library(data.table, verbose = FALSE, quietly = TRUE)
+library(knitr     , verbose = FALSE, quietly = TRUE)
+library(RODBC     , verbose = FALSE, quietly = TRUE)
+library(xlsx      , verbose = FALSE, quietly = TRUE)
+library(printr    , verbose = FALSE, quietly = TRUE)
+
+fEcho    <- FALSE
+fEval    <- TRUE
+fCache   <- FALSE
+fResults <- 'asis'
+
+shtName  <- "MARA_LC"
+wbResult <- "MARA_LOWERCASE"
+
+#file.remove(dir("./results", full.names = TRUE))
+fileXL <- paste0("./results/", wbResult, ".xlsx")
+```  
+
+```{r ReadingData, echo=fEcho, eval=fEval, cache=TRUE}
+parSYST <- "RA1"
+parCLNT <- "250"
+parTAB1 <- "MARA"
+
+
+parTBL1 <- paste0(parSYST, "C", parCLNT, "_", parTAB1)
+
+
+A2R    <- odbcConnect("ACCESS2R")
+
+dtMARA <- as.data.table(
+  sqlFetch(A2R, parTBL1, 
+           stringsAsFactors = FALSE)
+  )
+setkey(dtMARA, "MATNR")
+
+dfCMT <- sqlQuery(A2R, 
+                  paste("SELECT START, DTIME, RECORDCOUNT", 
+                        "FROM zsDD02_SLCT",
+                        "WHERE ((SYSTEMID=", 
+                        paste0("'", parSYST, "'"),  
+                        ") AND (CLIENT=", 
+                        parCLNT, ") AND (TABNAME=", 
+                        paste0("'", parTAB1, "'"), 
+                        "));")) 
+
+attr(dtMARA, "RefreshDate")      <- dfCMT[["START"]]
+attr(dtMARA, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+
+close(A2R)
+
+```
+
+```{r CreateDataSet, echo=fEcho, eval= fEval, cache = fCache, results='hide'}
+dtANA01 <- dtMARA[grepl(pattern = "[a-z]", x = ZZMODEL, 
+                        ignore.case = FALSE) |
+                  grepl(pattern = "[a-z]", x = ZZPRDMASTER, 
+                        ignore.case = FALSE)]
+```
+
+```{r Analysis01, echo=fEcho, eval=fEval, cache=fCache, results='hide'}
+```
+
+# Defect
+The following `r nrow(dtANA01)` records have lowercase characters in either the
+filed *ZZMODEL* or the field *ZZPRDMASTER*. The desing of ECC is such that lowercase should not be allowed. It seems that the upload is circumventing this check.
+
+# Impact
+The design of BI is based upon ECC so lowercase is not allowed. For this reason 
+these `r nrow(dtANA01)` records can not be loaded into BI resulting in Articles
+without master data in BI. This affects testing of all reports where article is used.
+
+# Analysis
+As an example of incorrect record a small extract of `r parTAB1` is shown below.  
+
+- Table analyzed  : `r parTAB1`  
+- Number of records: `r attr(dtMARA, "RecordsExtracted")`  
+- Extracted on     : `r attr(dtMARA, "RefreshDate")`  
+
+```{r Results02, echo=fEcho, eval=fEval, cache=fCache, results=fResults}
+head(dtANA01)
+```
+
+# Solution Direction
+1. Implement a conversion to uppercase before uploading into ECC
+2. Overwrite the current records with upper case, BI should pick up the delta
+
+# Details
+
+The total list can be found below and in the excel file (*`r fileXL `*):
+
+```{r Details, echo=fEcho, eval=fEval, cache=fCache, results=fResults}
+
+write.xlsx(dtANA01, 
+           fileXL, sheetName= shtName, 
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=TRUE)
+
+dtANA01[order()]
+```

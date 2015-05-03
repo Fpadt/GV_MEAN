@@ -1,0 +1,110 @@
+---
+output: 
+   pdf_document:
+    toc:             true
+    toc_depth:       2
+    number_sections: true
+    fig_caption:     true
+    fig_crop:        true
+    highlight:       tango    
+---
+
+\newpage
+![Logo](http://www.grandvision.com/img/logoGV.png)  
+
+```{r RSetup, echo=FALSE, eval=TRUE, results='asis'}
+library(data.table, verbose = FALSE, quietly = TRUE)
+library(knitr     , verbose = FALSE, quietly = TRUE)
+library(RODBC     , verbose = FALSE, quietly = TRUE)
+library(xlsx      , verbose = FALSE, quietly = TRUE)
+library(printr    , verbose = FALSE, quietly = TRUE)
+
+fEcho    <- FALSE
+fEval    <- TRUE
+fCache   <- FALSE
+fResults <- 'asis'
+
+shtName  <- "ANA1"
+wbResult <- "Result"
+
+#file.remove(dir("./results", full.names = TRUE))
+fileXL <- paste0("./results/", wbResult, ".xlsx")
+```  
+
+```{r ReadingData, echo=fEcho, eval=fEval, cache=TRUE}
+parSYST <- "BA1"
+parCLNT <- "200"
+parTAB1 <- "RSDCHABAS"
+
+
+parTBL1 <- paste0(parSYST, "C", parCLNT, "_", parTAB1)
+
+
+A2R    <- odbcConnect("ACCESS2R")
+
+dtTAB1 <- as.data.table(
+  sqlFetch(A2R, parTBL1, 
+           stringsAsFactors = FALSE)
+  )
+setkey(dtTAB1, "CHABASNM")
+
+dfCMT <- sqlQuery(A2R, 
+                  paste("SELECT SYSTEMID, CLIENT, TABNAME, ",
+                        "START, DTIME, RECORDCOUNT", 
+                        "FROM zsDD02_SLCT",
+                        "WHERE ((SYSTEMID=", 
+                        paste0("'", parSYST, "'"),  
+                        ") AND (CLIENT=", 
+                        parCLNT, ") AND (TABNAME=", 
+                        paste0("'", parTAB1, "'"), 
+                        "));")) 
+
+attr(dtTAB1, "RefreshDate")      <- dfCMT[["START"]]
+attr(dtTAB1, "RecordsExtracted") <- dfCMT[["RECORDCOUNT"]]
+
+close(A2R)
+
+```
+
+```{r CreateDataSet, echo=fEcho, eval= fEval, cache = fCache, results='hide'}
+# Extract RSDCHABAS
+# 
+# add Table & Table Type S,P,T
+# add Owner
+# 
+# merge with RSDCHABAS for additional fields
+# Melt to: qryIOBJ_TABTYPE_RECCOUNT
+# filter with S> 1
+# BA1C200_RSDCHABAS_TXTTABFL = 1
+# 
+# determine iobj with data by count S, count P and T
+
+# Check for lower case in BI system
+
+```
+
+```{r Analysis01, echo=fEcho, eval=fEval, cache=fCache, results='hide'}
+```
+
+# Defect
+The following `r nrow(dtANA01)` 
+
+# Impact
+
+
+# Solution Direction
+1. 
+2. 
+
+# Details
+
+The total list can be found below and in the excel file (*`r fileXL `*):
+
+```{r Details, echo=fEcho, eval=fEval, cache=fCache, results=fResults}
+
+write.xlsx(dtANA01[order(DTP)], 
+           fileXL, sheetName= shtName, 
+           col.names=TRUE, row.names=FALSE, append=FALSE, showNA=TRUE)
+
+dtANA01[order()]
+```
